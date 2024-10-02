@@ -404,9 +404,14 @@ def adsorption_calculations(
     configuration_numbers = []
     job_dirs = []
 
-    check_dissociation(True, ads_slabs[0], POSCAR_from_file, CONTCAR_from_file, get_tags(ads_slabs[0]))
-
     for idx in range(len(adslab_structures)):
+        relaxed_structure = adslabs_data["relaxed_structures"][idx]
+        check_dissociation(
+            adslab_structures[idx],
+            adslab_structures[idx],
+            relaxed_structure,
+            get_tags(adslab_structures[idx]),
+        )
         ads_energy = (
             adslabs_data["static_energy"][idx] - molecule_dft_energy - slab_dft_energy
         )
@@ -435,15 +440,25 @@ def adsorption_calculations(
 
 
 class AdsorptionFailureChecker:
+    """
+    Class to check for anomalies in adsorption relaxation calculations.
+
+    The class checks for the following anomalies:
+    - Adsorbate dissociation
+    - Surface reconstruction
+    - Adsorbate desorption
+    - Adsorbate intercalation
+    """
+
     def __init__(
         self,
         init_structure: Structure,
         final_structure: Structure,
         atoms_tag: list[int],
         final_slab_structure: Structure | None = None,
-        surface_change_cutoff_multiplier: float = 1.5,
-        desorption_cutoff_multiplier: float = 1.5,
-    ):
+        surface_change_cutoff: float = 1.5,
+        desorption_cutoff: float = 1.5,
+    ) -> None:
         """
         Flag anomalies based on initial and final structure of a adsorption relaxation.
 
@@ -451,18 +466,21 @@ class AdsorptionFailureChecker:
             init_structure (Structure): the adslab in its initial state
             final_structure (Structure): the adslab in its final state
             atoms_tag (List[int]): the atom tags; 0=bulk, 1=surface, 2=adsorbate
-            final_slab_structure (Structure, optional): the relaxed slab. If unspecified, this defaults
-                to using the initial adslab without the adsorbate.
-            surface_change_cutoff_multiplier (float, optional): cushion for small atom movements
+            final_slab_structure (Structure, optional): the relaxed slab.
+            surface_change_cutoff (float, optional): cushion for small atom movements
                 when assessing atom connectivity for reconstruction
-            desorption_cutoff_multiplier (float, optional): cushion for physisorbed systems to not
+            desorption_cutoff (float, optional): cushion for physisorbed systems to not
                 be discarded. Applied to the covalent radii.
+
+        Returns
+        -------
+            None
         """
         self.init_structure = init_structure
         self.final_structure = final_structure
         self.atoms_tag = atoms_tag
-        self.surface_change_cutoff_multiplier = surface_change_cutoff_multiplier
-        self.desorption_cutoff_multiplier = desorption_cutoff_multiplier
+        self.surface_change_cutoff = surface_change_cutoff
+        self.desorption_cutoff = desorption_cutoff
 
         if final_slab_structure is None:
             slab_indices = [i for i, tag in enumerate(self.atoms_tag) if tag != 2]
@@ -475,12 +493,12 @@ class AdsorptionFailureChecker:
         self, structure: Structure, cutoff_multiplier: float = 1.0
     ) -> np.ndarray:
         """
-        Generate the connectivity of a structure by computing pairwise distances.
+        Generate the connectivity of a structure.
 
         Args:
             structure (Structure): Pymatgen Structure object
-            cutoff_multiplier (float, optional): Cushion for small atom movements when assessing
-                atom connectivity.
+            cutoff_multiplier (float, optional): Cushion for small atom
+                movements when assessing atom connectivity.
 
         Returns
         -------
@@ -511,7 +529,7 @@ class AdsorptionFailureChecker:
 
     def is_adsorbate_dissociated(self) -> bool:
         """
-        Tests if the initial adsorbate connectivity is maintained.
+        Test if the initial adsorbate connectivity is maintained.
 
         Returns
         -------
@@ -532,9 +550,10 @@ class AdsorptionFailureChecker:
 
     def is_surface_changed(self) -> bool:
         """
-        Tests bond breaking/forming events within a tolerance on the surface so
-        that systems with significant adsorbate-induced surface changes may be discarded
-        since the reference to the relaxed slab may no longer be valid.
+        Test bond breaking/forming events within a tolerance on the surface.
+
+        So that systems with significant adsorbate-induced surface changes
+        may be discarded since the reference to the relaxed slab may no longer be valid.
 
         Returns
         -------
@@ -547,13 +566,13 @@ class AdsorptionFailureChecker:
 
         adslab_connectivity = self._get_connectivity(final_surface_structure)
         slab_connectivity_w_cushion = self._get_connectivity(
-            self.final_slab_structure, self.surface_change_cutoff_multiplier
+            self.final_slab_structure, self.surface_change_cutoff
         )
         ### surface reconstruction or aggregation
         slab_test = np.any(adslab_connectivity - slab_connectivity_w_cushion == 1)
 
         adslab_connectivity_w_cushion = self._get_connectivity(
-            final_surface_structure, self.surface_change_cutoff_multiplier
+            final_surface_structure, self.surface_change_cutoff
         )
         slab_connectivity = self._get_connectivity(self.final_slab_structure)
         ### bond breaking or surface degradation
@@ -563,6 +582,8 @@ class AdsorptionFailureChecker:
 
     def is_adsorbate_desorbed(self) -> bool:
         """
+        Check for desorption of the adsorbate.
+
         Checks if the adsorbate binding atoms have no connection with slab atoms,
         considering it desorbed.
 
@@ -573,9 +594,10 @@ class AdsorptionFailureChecker:
         adsorbate_indices = [i for i, tag in enumerate(self.atoms_tag) if tag == 2]
         surface_indices = [i for i, tag in enumerate(self.atoms_tag) if tag != 2]
         final_connectivity = self._get_connectivity(
-            self.final_structure, self.desorption_cutoff_multiplier
+            self.final_structure, self.desorption_cutoff
         )
-        ### The adsorbate is considered desorbed if it has no bonds with the surface atoms in the final structure.
+        ### The adsorbate is considered desorbed if it has no bonds
+        ### with the surface atoms in the final structure.
         for idx in adsorbate_indices:
             if np.sum(final_connectivity[idx][surface_indices]) >= 1:
                 return False
@@ -583,7 +605,7 @@ class AdsorptionFailureChecker:
 
     def is_adsorbate_intercalated(self) -> bool:
         """
-        Ensures the adsorbate isn't interacting with an atom that is not allowed to relax.
+        Ensure the adsorbate isn't interacting with an subsurface atom.
 
         Returns
         -------
@@ -599,7 +621,19 @@ class AdsorptionFailureChecker:
         return False
 
 
-def structure_matcher(structure1, structure2):
+def structure_matcher(structure1: Structure, structure2: Structure) -> bool:
+    """
+    Compare two structures and return whether they are equal.
+
+    Args:
+        structure1 (Structure): The first structure.
+        structure2 (Structure): The second structure.
+
+    Returns
+    -------
+        bool: Whether the structures are equal.
+
+    """
     from pymatgen.analysis.structure_matcher import StructureMatcher
 
     # Initialize the StructureMatcher
@@ -612,41 +646,37 @@ def structure_matcher(structure1, structure2):
         angle_tol=5,  # Angle tolerance in degrees
     )
 
-    # Compare the structures
-    are_structures_equal = matcher.fit(structure1, structure2)
-    return are_structures_equal
+    return matcher.fit(structure1, structure2)
 
 
-def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags):
-    if from_vasp:
-        if structure_matcher(structure_orig, vasp_orig):
-            # Transfer the tags to CONTCAR_from_file
-            vasp_relaxed.add_site_property("surface_properties", tags)
+def check_dissociation(
+    structure_orig: Structure,
+    vasp_orig: Structure,
+    vasp_relaxed: Structure,
+    tags: list[str],
+) -> tuple[str, str, str, str]:
+    """
+    Check if the adsorbate is dissociated.
 
-            ads_failure_checker = AdsorptionFailureChecker(
-                init_structure=structure_orig,
-                final_structure=vasp_relaxed,
-                atoms_tag=[
-                    0 if tag == "subsurface" else 1 if tag == "surface" else 2
-                    for tag in tags
-                ],
-            )
+    Args:
+        structure_orig (Structure): The initial structure.
+        vasp_orig (Structure): The initial VASP structure.
+        vasp_relaxed (Structure): The relaxed VASP structure.
+        tags (list[str]): The tags of the sites.
 
-            # Use the methods of anomaly_detector
-            dissociated = ads_failure_checker.is_adsorbate_dissociated()
-            surface_changed = ads_failure_checker.is_surface_changed()
-            desorbed = ads_failure_checker.is_adsorbate_desorbed()
-            intercalated = ads_failure_checker.is_adsorbate_intercalated()
+    Returns
+    -------
+        tuple[str]: The results of the
+            - adsorbate dissociation
+            - surface change
+            - adsorbate desorption
+            - adsorbate intercalation
+    """
+    if structure_matcher(structure_orig, vasp_orig):
+        # Transfer the tags to CONTCAR_from_file
+        vasp_relaxed.add_site_property("surface_properties", tags)
 
-            # Print the results
-            print(f"Adsorbate Dissociated: {dissociated}")
-            print(f"Surface Changed: {surface_changed}")
-            print(f"Adsorbate Desorbed: {desorbed}")
-            print(f"Adsorbate Intercalated: {intercalated}")
-        else:
-            print("The structures do not match.")
-    else:
-        anomaly_detector = AdsorptionFailureChecker(
+        ads_failure_checker = AdsorptionFailureChecker(
             init_structure=structure_orig,
             final_structure=vasp_relaxed,
             atoms_tag=[
@@ -654,17 +684,36 @@ def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags)
                 for tag in tags
             ],
         )
+
         # Use the methods of anomaly_detector
-        dissociated = anomaly_detector.is_adsorbate_dissociated()
-        surface_changed = anomaly_detector.is_surface_changed()
-        desorbed = anomaly_detector.is_adsorbate_desorbed()
-        intercalated = anomaly_detector.is_adsorbate_intercalated()
+        dissociated = ads_failure_checker.is_adsorbate_dissociated()
+        surface_changed = ads_failure_checker.is_surface_changed()
+        desorbed = ads_failure_checker.is_adsorbate_desorbed()
+        intercalated = ads_failure_checker.is_adsorbate_intercalated()
 
-        # Print the results
-        print(f"Adsorbate Dissociated: {dissociated}")
-        print(f"Surface Changed: {surface_changed}")
-        print(f"Adsorbate Desorbed: {desorbed}")
-        print(f"Adsorbate Intercalated: {intercalated}")
+        return (
+            f"Adsorbate Dissociated: {dissociated}",
+            f"Surface Changed: {surface_changed}",
+            f"Adsorbate Desorbed: {desorbed}",
+            f"Adsorbate Intercalated: {intercalated}",
+        )
+    return (
+        "Adsorbate Dissociated: N/A",
+        "Surface Changed: N/A",
+        "Adsorbate Desorbed: N/A",
+        "Adsorbate Intercalated: N/A",
+    )
 
-def get_tags(structure):
-    return [site.properties.get('surface_properties') for site in structure]
+
+def get_tags(stru: Structure) -> list[str]:
+    """
+    Get the tags of the sites.
+
+    Args:
+        structure (Structure): The structure.
+
+    Returns
+    -------
+        list[str]: The tags of the sites.
+    """
+    return [site.properties.get("surface_properties") for site in stru]
