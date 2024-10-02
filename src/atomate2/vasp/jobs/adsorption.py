@@ -404,6 +404,8 @@ def adsorption_calculations(
     configuration_numbers = []
     job_dirs = []
 
+    check_dissociation(True, ads_slabs[0], POSCAR_from_file, CONTCAR_from_file, get_tags(ads_slabs[0]))
+
     for idx in range(len(adslab_structures)):
         ads_energy = (
             adslabs_data["static_energy"][idx] - molecule_dft_energy - slab_dft_energy
@@ -663,3 +665,6 @@ def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags)
         print(f"Surface Changed: {surface_changed}")
         print(f"Adsorbate Desorbed: {desorbed}")
         print(f"Adsorbate Intercalated: {intercalated}")
+
+def get_tags(structure):
+    return [site.properties.get('surface_properties') for site in structure]
