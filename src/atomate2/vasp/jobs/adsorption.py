@@ -7,8 +7,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import numpy as np
 from jobflow import Flow, Response, job
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
+from pymatgen.analysis.molecule_structure_comparator import CovalentRadius
 from pymatgen.core import Element, Molecule, Structure
 from pymatgen.core.surface import SlabGenerator
 from pymatgen.io.vasp import Kpoints
@@ -428,3 +430,168 @@ def adsorption_calculations(
         adsorption_energies=sorted_adsorption_energies,
         job_dirs=sorted_job_dirs,
     )
+
+
+class DetectAdsorptionFailure:
+    def __init__(
+        self,
+        init_structure: Structure,
+        final_structure: Structure,
+        atoms_tag: list[int],
+        final_slab_structure: Structure | None = None,
+        surface_change_cutoff_multiplier: float = 1.5,
+        desorption_cutoff_multiplier: float = 1.5,
+    ):
+        """
+        Flag anomalies based on initial and final structure of a adsorption relaxation.
+
+        Args:
+            init_structure (Structure): the adslab in its initial state
+            final_structure (Structure): the adslab in its final state
+            atoms_tag (List[int]): the atom tags; 0=bulk, 1=surface, 2=adsorbate
+            final_slab_structure (Structure, optional): the relaxed slab. If unspecified, this defaults
+                to using the initial adslab without the adsorbate.
+            surface_change_cutoff_multiplier (float, optional): cushion for small atom movements
+                when assessing atom connectivity for reconstruction
+            desorption_cutoff_multiplier (float, optional): cushion for physisorbed systems to not
+                be discarded. Applied to the covalent radii.
+        """
+        self.init_structure = init_structure
+        self.final_structure = final_structure
+        self.atoms_tag = atoms_tag
+        self.surface_change_cutoff_multiplier = surface_change_cutoff_multiplier
+        self.desorption_cutoff_multiplier = desorption_cutoff_multiplier
+
+        if final_slab_structure is None:
+            slab_indices = [i for i, tag in enumerate(self.atoms_tag) if tag != 2]
+            slab_sites = [self.init_structure[i] for i in slab_indices]
+            self.final_slab_structure = Structure.from_sites(slab_sites)
+        else:
+            self.final_slab_structure = final_slab_structure
+
+    def _get_connectivity(
+        self, structure: Structure, cutoff_multiplier: float = 1.0
+    ) -> np.ndarray:
+        """
+        Generate the connectivity of a structure by computing pairwise distances.
+
+        Args:
+            structure (Structure): Pymatgen Structure object
+            cutoff_multiplier (float, optional): Cushion for small atom movements when assessing
+                atom connectivity.
+
+        Returns
+        -------
+            np.ndarray: The connectivity matrix of the structure.
+        """
+        num_sites = len(structure)
+        adjacency_matrix = np.zeros((num_sites, num_sites), dtype=int)
+
+        # Get covalent radii for each site
+        covalent_radii = []
+        for site in structure.sites:
+            element = str(site.specie)
+            covalent_radius = CovalentRadius.radius[element]
+            if covalent_radius is None:
+                raise ValueError(f"Covalent radius not defined for element {element}")
+            covalent_radii.append(covalent_radius)
+
+        # Compute adjacency matrix
+        for i in range(num_sites):
+            for j in range(i + 1, num_sites):
+                cutoff = (covalent_radii[i] + covalent_radii[j]) * cutoff_multiplier
+                distance = structure.get_distance(i, j)
+                if distance <= cutoff:
+                    adjacency_matrix[i, j] = 1
+                    adjacency_matrix[j, i] = 1
+
+        return adjacency_matrix
+
+    def is_adsorbate_dissociated(self) -> bool:
+        """
+        Tests if the initial adsorbate connectivity is maintained.
+
+        Returns
+        -------
+            bool: True if the connectivity was not maintained, otherwise False
+        """
+        adsorbate_indices = [i for i, tag in enumerate(self.atoms_tag) if tag == 2]
+        init_adsorbate_structure = Structure.from_sites(
+            [self.init_structure[i] for i in adsorbate_indices]
+        )
+        final_adsorbate_structure = Structure.from_sites(
+            [self.final_structure[i] for i in adsorbate_indices]
+        )
+
+        init_connectivity = self._get_connectivity(init_adsorbate_structure)
+        final_connectivity = self._get_connectivity(final_adsorbate_structure)
+
+        return not np.array_equal(init_connectivity, final_connectivity)
+
+    def is_surface_changed(self) -> bool:
+        """
+        Tests bond breaking/forming events within a tolerance on the surface so
+        that systems with significant adsorbate-induced surface changes may be discarded
+        since the reference to the relaxed slab may no longer be valid.
+
+        Returns
+        -------
+            bool: True if the surface is reconstructed, otherwise False
+        """
+        surface_indices = [i for i, tag in enumerate(self.atoms_tag) if tag != 2]
+        final_surface_structure = Structure.from_sites(
+            [self.final_structure[i] for i in surface_indices]
+        )
+
+        adslab_connectivity = self._get_connectivity(final_surface_structure)
+        slab_connectivity_w_cushion = self._get_connectivity(
+            self.final_slab_structure, self.surface_change_cutoff_multiplier
+        )
+        ### surface reconstruction or aggregation
+        slab_test = np.any(adslab_connectivity - slab_connectivity_w_cushion == 1)
+
+        adslab_connectivity_w_cushion = self._get_connectivity(
+            final_surface_structure, self.surface_change_cutoff_multiplier
+        )
+        slab_connectivity = self._get_connectivity(self.final_slab_structure)
+        ### bond breaking or surface degradation
+        adslab_test = np.any(slab_connectivity - adslab_connectivity_w_cushion == 1)
+
+        return slab_test or adslab_test
+
+    def is_adsorbate_desorbed(self) -> bool:
+        """
+        Checks if the adsorbate binding atoms have no connection with slab atoms,
+        considering it desorbed.
+
+        Returns
+        -------
+            bool: True if there is desorption, otherwise False
+        """
+        adsorbate_indices = [i for i, tag in enumerate(self.atoms_tag) if tag == 2]
+        surface_indices = [i for i, tag in enumerate(self.atoms_tag) if tag != 2]
+        final_connectivity = self._get_connectivity(
+            self.final_structure, self.desorption_cutoff_multiplier
+        )
+        ### The adsorbate is considered desorbed if it has no bonds with the surface atoms in the final structure.
+        for idx in adsorbate_indices:
+            if np.sum(final_connectivity[idx][surface_indices]) >= 1:
+                return False
+        return True
+
+    def is_adsorbate_intercalated(self) -> bool:
+        """
+        Ensures the adsorbate isn't interacting with an atom that is not allowed to relax.
+
+        Returns
+        -------
+            bool: True if any adsorbate atom neighbors a frozen atom, otherwise False
+        """
+        adsorbate_indices = [i for i, tag in enumerate(self.atoms_tag) if tag == 2]
+        frozen_atoms_indices = [i for i, tag in enumerate(self.atoms_tag) if tag == 0]
+        final_connectivity = self._get_connectivity(self.final_structure)
+
+        for idx in adsorbate_indices:
+            if np.sum(final_connectivity[idx][frozen_atoms_indices]) >= 1:
+                return True
+        return False
