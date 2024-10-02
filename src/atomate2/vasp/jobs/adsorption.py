@@ -619,9 +619,9 @@ def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags)
     if from_vasp:
         if structure_matcher(structure_orig, vasp_orig):
             # Transfer the tags to CONTCAR_from_file
-            CONTCAR_from_file.add_site_property("surface_properties", tags)
+            vasp_relaxed.add_site_property("surface_properties", tags)
 
-            anomaly_detector = AdsorptionFailureChecker(
+            ads_failure_checker = AdsorptionFailureChecker(
                 init_structure=structure_orig,
                 final_structure=vasp_relaxed,
                 atoms_tag=[
@@ -631,10 +631,10 @@ def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags)
             )
 
             # Use the methods of anomaly_detector
-            dissociated = anomaly_detector.is_adsorbate_dissociated()
-            surface_changed = anomaly_detector.is_surface_changed()
-            desorbed = anomaly_detector.is_adsorbate_desorbed()
-            intercalated = anomaly_detector.is_adsorbate_intercalated()
+            dissociated = ads_failure_checker.is_adsorbate_dissociated()
+            surface_changed = ads_failure_checker.is_surface_changed()
+            desorbed = ads_failure_checker.is_adsorbate_desorbed()
+            intercalated = ads_failure_checker.is_adsorbate_intercalated()
 
             # Print the results
             print(f"Adsorbate Dissociated: {dissociated}")
