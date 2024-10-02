@@ -432,7 +432,7 @@ def adsorption_calculations(
     )
 
 
-class DetectAdsorptionFailure:
+class AdsorptionFailureChecker:
     def __init__(
         self,
         init_structure: Structure,
@@ -595,3 +595,71 @@ class DetectAdsorptionFailure:
             if np.sum(final_connectivity[idx][frozen_atoms_indices]) >= 1:
                 return True
         return False
+
+
+def structure_matcher(structure1, structure2):
+    from pymatgen.analysis.structure_matcher import StructureMatcher
+
+    # Initialize the StructureMatcher
+    matcher = StructureMatcher(
+        primitive_cell=False,
+        scale=False,
+        attempt_supercell=False,
+        allow_subset=False,
+        stol=0.01,  # Site tolerance in fractional coordinates
+        angle_tol=5,  # Angle tolerance in degrees
+    )
+
+    # Compare the structures
+    are_structures_equal = matcher.fit(structure1, structure2)
+    return are_structures_equal
+
+
+def check_dissociation(from_vasp, structure_orig, vasp_orig, vasp_relaxed, tags):
+    if from_vasp:
+        if structure_matcher(structure_orig, vasp_orig):
+            # Transfer the tags to CONTCAR_from_file
+            CONTCAR_from_file.add_site_property("surface_properties", tags)
+
+            anomaly_detector = AdsorptionFailureChecker(
+                init_structure=structure_orig,
+                final_structure=vasp_relaxed,
+                atoms_tag=[
+                    0 if tag == "subsurface" else 1 if tag == "surface" else 2
+                    for tag in tags
+                ],
+            )
+
+            # Use the methods of anomaly_detector
+            dissociated = anomaly_detector.is_adsorbate_dissociated()
+            surface_changed = anomaly_detector.is_surface_changed()
+            desorbed = anomaly_detector.is_adsorbate_desorbed()
+            intercalated = anomaly_detector.is_adsorbate_intercalated()
+
+            # Print the results
+            print(f"Adsorbate Dissociated: {dissociated}")
+            print(f"Surface Changed: {surface_changed}")
+            print(f"Adsorbate Desorbed: {desorbed}")
+            print(f"Adsorbate Intercalated: {intercalated}")
+        else:
+            print("The structures do not match.")
+    else:
+        anomaly_detector = AdsorptionFailureChecker(
+            init_structure=structure_orig,
+            final_structure=vasp_relaxed,
+            atoms_tag=[
+                0 if tag == "subsurface" else 1 if tag == "surface" else 2
+                for tag in tags
+            ],
+        )
+        # Use the methods of anomaly_detector
+        dissociated = anomaly_detector.is_adsorbate_dissociated()
+        surface_changed = anomaly_detector.is_surface_changed()
+        desorbed = anomaly_detector.is_adsorbate_desorbed()
+        intercalated = anomaly_detector.is_adsorbate_intercalated()
+
+        # Print the results
+        print(f"Adsorbate Dissociated: {dissociated}")
+        print(f"Surface Changed: {surface_changed}")
+        print(f"Adsorbate Desorbed: {desorbed}")
+        print(f"Adsorbate Intercalated: {intercalated}")
