@@ -654,7 +654,7 @@ def check_dissociation(
     vasp_orig: Structure,
     vasp_relaxed: Structure,
     tags: list[str],
-) -> tuple[str, str, str, str]:
+) -> bool:
     """
     Check if the adsorbate is dissociated.
 
@@ -691,18 +691,8 @@ def check_dissociation(
         desorbed = ads_failure_checker.is_adsorbate_desorbed()
         intercalated = ads_failure_checker.is_adsorbate_intercalated()
 
-        return (
-            f"Adsorbate Dissociated: {dissociated}",
-            f"Surface Changed: {surface_changed}",
-            f"Adsorbate Desorbed: {desorbed}",
-            f"Adsorbate Intercalated: {intercalated}",
-        )
-    return (
-        "Adsorbate Dissociated: N/A",
-        "Surface Changed: N/A",
-        "Adsorbate Desorbed: N/A",
-        "Adsorbate Intercalated: N/A",
-    )
+        return dissociated and surface_changed and desorbed and intercalated
+    return False
 
 
 def get_tags(stru: Structure) -> list[str]:
