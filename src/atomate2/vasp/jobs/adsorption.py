@@ -403,15 +403,18 @@ def adsorption_calculations(
     adsorption_energies = []
     configuration_numbers = []
     job_dirs = []
+    stable_checkers = []
 
     for idx in range(len(adslab_structures)):
         relaxed_structure = adslabs_data["relaxed_structures"][idx]
-        check_dissociation(
+        stable_checker = check_dissociation(
             adslab_structures[idx],
             adslab_structures[idx],
             relaxed_structure,
             get_tags(adslab_structures[idx]),
         )
+
+        stable_checkers.append(stable_checker)
         ads_energy = (
             adslabs_data["static_energy"][idx] - molecule_dft_energy - slab_dft_energy
         )
@@ -419,10 +422,12 @@ def adsorption_calculations(
         configuration_numbers.append(idx)
         job_dirs.append(adslabs_data["dirs"][idx])
 
-    # Sort the data by adsorption energy
+    # Sort the data by adsorption energy if stable_checker is True
     sorted_indices = sorted(
         range(len(adsorption_energies)), key=lambda k: adsorption_energies[k]
     )
+    ### remove the unstable configurations
+    sorted_indices = [i for i in sorted_indices if stable_checkers[i]]
 
     # Apply the sorted indices to all lists
     sorted_structures = [adslab_structures[i] for i in sorted_indices]
