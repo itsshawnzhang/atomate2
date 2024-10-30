@@ -271,10 +271,11 @@ def generate_slab(
         surface_idx,
         min_slab_size,
         min_vacuum_size,
-        primitive=False,
+        lll_reduce=True,
+        primitive=True,
         center_slab=True,
     )
-    temp_slab = slab_generator.get_slab()
+    temp_slab = slab_generator.get_slab(shift=0.4)
     ads_slabs = AdsorbateSiteFinder(temp_slab).generate_adsorption_structures(
         hydrogen, translate=True, min_lw=min_lw
     )
@@ -317,10 +318,11 @@ def generate_adslabs(
         surface_idx,
         min_slab_size,
         min_vacuum_size,
-        primitive=False,
+        lll_reduce=True,
+        primitive=True,
         center_slab=True,
     )
-    slab = slab_generator.get_slab()
+    slab = slab_generator.get_slab(shift=0.4)
 
     return AdsorbateSiteFinder(slab).generate_adsorption_structures(
         molecule_structure, translate=True, min_lw=min_lw
