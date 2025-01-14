@@ -46,8 +46,7 @@ class PhononQHADoc(StructureMetadata, extra="allow"):  # type: ignore[call-arg]
     )
     gibbs_temperature: Optional[list[float]] = Field(
         None,
-        description="Gibbs free energies in eV at temperatures."
-        "Shape: (temperatures, )",
+        description="Gibbs free energies in eV at temperatures.Shape: (temperatures, )",
     )
     bulk_modulus_temperature: Optional[list[float]] = Field(
         None,
